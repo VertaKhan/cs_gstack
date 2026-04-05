@@ -55,7 +55,109 @@ CREATE TABLE IF NOT EXISTS sticker_prices (
     price       REAL NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS portfolio (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    weapon          TEXT NOT NULL,
+    skin            TEXT NOT NULL,
+    quality         TEXT NOT NULL,
+    stattrak        INTEGER NOT NULL DEFAULT 0,
+    float_value     REAL,
+    purchase_price  REAL NOT NULL,
+    purchase_date   TEXT NOT NULL,
+    source          TEXT,
+    notes           TEXT,
+    sold_price      REAL,
+    sold_date       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_portfolio_item ON portfolio(weapon, skin, quality);
 """
+
+
+def add_portfolio_item(
+    conn: sqlite3.Connection,
+    weapon: str,
+    skin: str,
+    quality: str,
+    stattrak: bool,
+    float_value: float | None,
+    purchase_price: float,
+    source: str | None = None,
+    notes: str | None = None,
+) -> int:
+    """Insert a portfolio item. Returns the new row id."""
+    from datetime import datetime, timezone
+
+    cursor = conn.execute(
+        """
+        INSERT INTO portfolio (weapon, skin, quality, stattrak, float_value,
+                               purchase_price, purchase_date, source, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            weapon, skin, quality, int(stattrak), float_value,
+            purchase_price, datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            source, notes,
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid  # type: ignore[return-value]
+
+
+def list_portfolio_items(
+    conn: sqlite3.Connection,
+    active_only: bool = True,
+) -> list[dict]:
+    """List portfolio items. If active_only, exclude sold items."""
+    if active_only:
+        sql = "SELECT * FROM portfolio WHERE sold_price IS NULL ORDER BY purchase_date DESC"
+    else:
+        sql = "SELECT * FROM portfolio ORDER BY purchase_date DESC"
+    cursor = conn.execute(sql)
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def sell_portfolio_item(
+    conn: sqlite3.Connection,
+    item_id: int,
+    sold_price: float,
+) -> dict | None:
+    """Mark a portfolio item as sold. Returns updated row or None if not found."""
+    from datetime import datetime, timezone
+
+    sold_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn.execute(
+        "UPDATE portfolio SET sold_price = ?, sold_date = ? WHERE id = ? AND sold_price IS NULL",
+        (sold_price, sold_date, item_id),
+    )
+    conn.commit()
+    cursor = conn.execute("SELECT * FROM portfolio WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def portfolio_summary(conn: sqlite3.Connection) -> dict:
+    """Calculate portfolio summary: total_invested, total_sold, total_pnl, item_count, sold_count."""
+    cursor = conn.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE sold_price IS NULL) AS active_count,
+            COUNT(*) FILTER (WHERE sold_price IS NOT NULL) AS sold_count,
+            COALESCE(SUM(CASE WHEN sold_price IS NULL THEN purchase_price END), 0) AS active_invested,
+            COALESCE(SUM(CASE WHEN sold_price IS NOT NULL THEN purchase_price END), 0) AS sold_invested,
+            COALESCE(SUM(sold_price), 0) AS total_sold_revenue
+        FROM portfolio
+        """
+    )
+    row = dict(cursor.fetchone())
+    return {
+        "active_count": row["active_count"],
+        "sold_count": row["sold_count"],
+        "active_invested": row["active_invested"],
+        "sold_invested": row["sold_invested"],
+        "total_sold_revenue": row["total_sold_revenue"],
+        "realized_pnl": row["total_sold_revenue"] - row["sold_invested"],
+    }
 
 
 def query_price_history(

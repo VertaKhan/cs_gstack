@@ -14,7 +14,14 @@ from cs2.models.decision import DecisionAction
 from cs2.pipeline import Pipeline, PipelineError, PipelineResult
 from cs2.storage.cache import CacheStore
 from cs2.engine.identity import InvalidItemError, resolve_identity
-from cs2.storage.database import get_connection, query_price_history
+from cs2.storage.database import (
+    get_connection,
+    query_price_history,
+    add_portfolio_item,
+    list_portfolio_items,
+    sell_portfolio_item,
+    portfolio_summary,
+)
 from cs2.storage.logger import DecisionLogger
 
 
@@ -66,6 +73,32 @@ def main(argv: list[str] | None = None) -> None:
         "--limit", type=int, default=50, help="Maximum rows to display (default: 50)"
     )
 
+    # portfolio subcommand
+    portfolio_parser = subparsers.add_parser(
+        "portfolio", help="Track your CS2 skin inventory"
+    )
+    portfolio_sub = portfolio_parser.add_subparsers(dest="portfolio_action")
+
+    # portfolio add
+    port_add = portfolio_sub.add_parser("add", help="Add item to portfolio")
+    port_add.add_argument("item_name", help='Item name, e.g. "AK-47 Redline FT"')
+    port_add.add_argument("--price", type=float, required=True, help="Purchase price")
+    port_add.add_argument("--float", type=float, dest="float_value", help="Float value")
+    port_add.add_argument("--source", help='Source: csfloat, steam, manual')
+    port_add.add_argument("--notes", help="Additional notes")
+
+    # portfolio list
+    port_list = portfolio_sub.add_parser("list", help="List portfolio items")
+    port_list.add_argument("--all", action="store_true", dest="show_all", help="Include sold items")
+
+    # portfolio sell
+    port_sell = portfolio_sub.add_parser("sell", help="Mark item as sold")
+    port_sell.add_argument("item_id", type=int, help="Item ID to mark as sold")
+    port_sell.add_argument("--price", type=float, required=True, help="Sell price")
+
+    # portfolio value
+    portfolio_sub.add_parser("value", help="Portfolio summary and P&L")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -76,6 +109,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_analyze(args)
     elif args.command == "history":
         _run_history(args)
+    elif args.command == "portfolio":
+        _run_portfolio(args)
 
 
 def _run_analyze(args: argparse.Namespace) -> None:
@@ -408,3 +443,168 @@ def _run_history(args: argparse.Namespace) -> None:
         console.print(f"  Records: {len(rows)}")
     finally:
         conn.close()
+
+
+def _run_portfolio(args: argparse.Namespace) -> None:
+    """Execute portfolio subcommands."""
+    action = getattr(args, "portfolio_action", None)
+    if action is None:
+        console.print("[red]Error:[/red] Specify a portfolio action: add, list, sell, value")
+        sys.exit(1)
+
+    conn = get_connection()
+    try:
+        if action == "add":
+            _portfolio_add(conn, args)
+        elif action == "list":
+            _portfolio_list(conn, args)
+        elif action == "sell":
+            _portfolio_sell(conn, args)
+        elif action == "value":
+            _portfolio_value(conn)
+    finally:
+        conn.close()
+
+
+def _portfolio_add(conn, args: argparse.Namespace) -> None:
+    """Add item to portfolio."""
+    try:
+        canonical = resolve_identity(args.item_name)
+    except InvalidItemError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+    item_id = add_portfolio_item(
+        conn,
+        weapon=canonical.weapon,
+        skin=canonical.skin,
+        quality=canonical.quality,
+        stattrak=canonical.stattrak,
+        float_value=args.float_value,
+        purchase_price=args.price,
+        source=args.source,
+        notes=args.notes,
+    )
+
+    label = canonical.weapon
+    if canonical.skin:
+        label += f" | {canonical.skin}"
+    if canonical.quality:
+        label += f" ({canonical.quality})"
+    if canonical.stattrak:
+        label = f"StatTrak\u2122 {label}"
+
+    console.print(
+        f"[green]Added[/green] {label} to portfolio "
+        f"(ID: {item_id}, price: ${args.price:.2f})"
+    )
+
+
+def _portfolio_list(conn, args: argparse.Namespace) -> None:
+    """List portfolio items."""
+    active_only = not args.show_all
+    items = list_portfolio_items(conn, active_only=active_only)
+
+    if not items:
+        console.print("[yellow]Portfolio is empty.[/yellow]")
+        return
+
+    title = "Portfolio" if active_only else "Portfolio (all items)"
+    table = Table(title=title, show_lines=True)
+    table.add_column("ID", justify="right", style="dim", width=4)
+    table.add_column("Item", min_width=20)
+    table.add_column("Float", justify="right", width=8)
+    table.add_column("Buy Price", justify="right", style="green")
+    table.add_column("Buy Date", style="cyan")
+    table.add_column("Source", style="dim")
+    table.add_column("Notes", max_width=20)
+    table.add_column("Status", justify="center")
+
+    for item in items:
+        label = item["weapon"]
+        if item["skin"]:
+            label += f" | {item['skin']}"
+        if item["quality"]:
+            label += f" ({item['quality']})"
+        if item["stattrak"]:
+            label = f"ST {label}"
+
+        float_str = f"{item['float_value']:.4f}" if item["float_value"] is not None else "-"
+        notes_str = (item["notes"] or "")[:20]
+
+        if item["sold_price"] is not None:
+            pnl = item["sold_price"] - item["purchase_price"]
+            pnl_color = "green" if pnl >= 0 else "red"
+            sign = "+" if pnl >= 0 else ""
+            status = f"[{pnl_color}]Sold ${item['sold_price']:.2f} ({sign}${pnl:.2f})[/{pnl_color}]"
+        else:
+            status = "[bold]Active[/bold]"
+
+        table.add_row(
+            str(item["id"]),
+            label,
+            float_str,
+            f"${item['purchase_price']:.2f}",
+            item["purchase_date"],
+            item["source"] or "-",
+            notes_str,
+            status,
+        )
+
+    console.print(table)
+
+
+def _portfolio_sell(conn, args: argparse.Namespace) -> None:
+    """Mark a portfolio item as sold."""
+    result = sell_portfolio_item(conn, args.item_id, args.price)
+    if result is None:
+        console.print(f"[red]Error:[/red] Item ID {args.item_id} not found")
+        sys.exit(1)
+
+    if result["sold_price"] is None:
+        console.print(f"[red]Error:[/red] Item ID {args.item_id} was already sold or not found")
+        sys.exit(1)
+
+    pnl = result["sold_price"] - result["purchase_price"]
+    pnl_color = "green" if pnl >= 0 else "red"
+    sign = "+" if pnl >= 0 else ""
+
+    label = result["weapon"]
+    if result["skin"]:
+        label += f" | {result['skin']}"
+
+    console.print(
+        f"[green]Sold[/green] {label} (ID: {args.item_id}) "
+        f"for ${args.price:.2f} — "
+        f"P&L: [{pnl_color}]{sign}${pnl:.2f}[/{pnl_color}]"
+    )
+
+
+def _portfolio_value(conn) -> None:
+    """Show portfolio summary."""
+    summary = portfolio_summary(conn)
+
+    if summary["active_count"] == 0 and summary["sold_count"] == 0:
+        console.print("[yellow]Portfolio is empty.[/yellow]")
+        return
+
+    lines: list[str] = []
+    lines.append(f"Active Items:      {summary['active_count']}")
+    lines.append(f"Active Invested:   ${summary['active_invested']:.2f}")
+    lines.append("")
+    lines.append(f"Sold Items:        {summary['sold_count']}")
+    lines.append(f"Sold Cost Basis:   ${summary['sold_invested']:.2f}")
+    lines.append(f"Sold Revenue:      ${summary['total_sold_revenue']:.2f}")
+
+    pnl = summary["realized_pnl"]
+    pnl_color = "green" if pnl >= 0 else "red"
+    sign = "+" if pnl >= 0 else ""
+    lines.append(f"Realized P&L:      [{pnl_color}]{sign}${pnl:.2f}[/{pnl_color}]")
+
+    panel = Panel(
+        "\n".join(lines),
+        title="Portfolio Summary",
+        border_style="blue",
+        padding=(1, 2),
+    )
+    console.print(panel)
