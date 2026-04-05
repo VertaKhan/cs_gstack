@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cs2.cli import main, _run_history
+from cs2.cli import main, _run_history, _format_json, _format_csv, _result_to_dict
 
 
 class TestCLIParsing:
@@ -229,3 +229,144 @@ class TestBatchMode:
 
         urls = _read_urls_from_file(str(urls_file))
         assert urls == []
+
+
+def _make_pipeline_result():
+    """Create a minimal PipelineResult for format tests."""
+    from cs2.models.items import CanonicalItem
+    from cs2.models.decision import Decision, DecisionAction
+    from cs2.models.pricing import PricingResult, ItemClass
+    from cs2.models.liquidity import LiquidityResult, LiquidityGrade
+    from cs2.pipeline import PipelineResult
+
+    canonical = CanonicalItem(
+        weapon="AK-47", skin="Redline", quality="Field-Tested",
+        stattrak=False, souvenir=False,
+    )
+    decision = Decision(
+        action=DecisionAction.BUY,
+        confidence=0.82,
+        listing_price=80.0,
+        estimated_value=120.0,
+        margin_pct=50.0,
+        safe_exit_price=95.0,
+        reasons=["underpriced by 33%"],
+        risk_flags=[],
+    )
+    pricing = PricingResult(
+        canonical=canonical,
+        base_price=45.0,
+        item_class=ItemClass.EXACT_PREMIUM,
+        estimated_value=120.0,
+        premium_breakdown={"float": 30.0, "sticker": 45.0},
+    )
+    liquidity = LiquidityResult(
+        canonical=canonical,
+        avg_daily_volume=10.0,
+        avg_spread_pct=5.0,
+        min_sell_days=1,
+        max_sell_days=3,
+        safe_exit_price=95.0,
+        grade=LiquidityGrade.HIGH,
+    )
+    return PipelineResult(
+        decision=decision,
+        canonical=canonical,
+        pricing=pricing,
+        liquidity=liquidity,
+    )
+
+
+class TestFormatJson:
+    def test_format_json_output(self):
+        """JSON output contains expected fields and values."""
+        import json
+        result = _make_pipeline_result()
+        output = _format_json([result])
+        data = json.loads(output)
+
+        assert data["item"] == "AK-47 | Redline (Field-Tested)"
+        assert data["action"] == "buy"
+        assert data["confidence"] == 0.82
+        assert data["listing_price"] == 80.0
+        assert data["estimated_value"] == 120.0
+        assert data["margin_pct"] == 50.0
+        assert data["safe_exit_price"] == 95.0
+        assert data["base_price"] == 45.0
+        assert data["item_class"] == "exact_premium"
+        assert data["liquidity_grade"] == "high"
+        assert data["reasons"] == ["underpriced by 33%"]
+        assert data["risk_flags"] == []
+        assert data["premium_breakdown"] == {"float": 30.0, "sticker": 45.0}
+
+    def test_format_json_batch(self):
+        """Batch JSON outputs an array."""
+        import json
+        r1 = _make_pipeline_result()
+        r2 = _make_pipeline_result()
+        output = _format_json([r1, r2])
+        data = json.loads(output)
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+
+class TestFormatCsv:
+    def test_format_csv_output(self):
+        """CSV output has header + data row with correct values."""
+        result = _make_pipeline_result()
+        output = _format_csv([result])
+        lines = output.strip().split("\n")
+
+        assert len(lines) == 2  # header + 1 data row
+        header = lines[0]
+        assert "item" in header
+        assert "action" in header
+        assert "liquidity_grade" in header
+
+        # Parse data row
+        import csv as csv_mod
+        import io
+        reader = csv_mod.DictReader(io.StringIO(output))
+        row = next(reader)
+        assert row["item"] == "AK-47 | Redline (Field-Tested)"
+        assert row["action"] == "buy"
+        assert row["confidence"] == "0.82"
+        assert row["listing_price"] == "80.0"
+
+    def test_format_csv_batch(self):
+        """Batch CSV has header + N data rows."""
+        r1 = _make_pipeline_result()
+        r2 = _make_pipeline_result()
+        output = _format_csv([r1, r2])
+        lines = output.strip().split("\n")
+        assert len(lines) == 3  # header + 2 rows
+
+
+class TestFormatDefault:
+    @patch("cs2.cli._run_analyze")
+    def test_format_default_rich(self, mock_run):
+        """Default format is 'rich' when --format not specified."""
+        main(["analyze", "https://csfloat.com/item/test-123"])
+        args = mock_run.call_args[0][0]
+        assert args.output_format == "rich"
+
+    @patch("cs2.cli._run_analyze")
+    def test_format_json_flag(self, mock_run):
+        """--format json is parsed correctly."""
+        main(["analyze", "https://csfloat.com/item/test", "--format", "json"])
+        args = mock_run.call_args[0][0]
+        assert args.output_format == "json"
+
+    @patch("cs2.cli._run_analyze")
+    def test_format_csv_flag(self, mock_run):
+        """--format csv is parsed correctly."""
+        main(["analyze", "https://csfloat.com/item/test", "--format", "csv"])
+        args = mock_run.call_args[0][0]
+        assert args.output_format == "csv"
+
+    @patch("cs2.cli._run_analyze")
+    def test_output_file_flag(self, mock_run):
+        """--output / -o flag is parsed correctly."""
+        main(["analyze", "https://csfloat.com/item/test", "--format", "json", "-o", "out.json"])
+        args = mock_run.call_args[0][0]
+        assert args.output_file == "out.json"

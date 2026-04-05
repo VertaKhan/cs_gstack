@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
+import json
 import os
 import sys
 
@@ -53,6 +56,19 @@ def main(argv: list[str] | None = None) -> None:
         "--stattrak", action="store_true", help="StatTrak item"
     )
     analyze_parser.add_argument(
+        "--format",
+        choices=["rich", "json", "csv"],
+        default="rich",
+        dest="output_format",
+        help="Output format: rich (default), json, csv",
+    )
+    analyze_parser.add_argument(
+        "-o", "--output",
+        default=None,
+        dest="output_file",
+        help="Write output to file instead of stdout",
+    )
+    analyze_parser.add_argument(
         "--config", default=None, help="Path to config.toml"
     )
     analyze_parser.add_argument(
@@ -71,6 +87,19 @@ def main(argv: list[str] | None = None) -> None:
     )
     history_parser.add_argument(
         "--limit", type=int, default=50, help="Maximum rows to display (default: 50)"
+    )
+
+    # compare subcommand
+    compare_parser = subparsers.add_parser(
+        "compare", help="Side-by-side comparison of two CS2 item listings"
+    )
+    compare_parser.add_argument("url1", help="First CSFloat or Steam Market URL")
+    compare_parser.add_argument("url2", help="Second CSFloat or Steam Market URL")
+    compare_parser.add_argument(
+        "--config", default=None, help="Path to config.toml"
+    )
+    compare_parser.add_argument(
+        "--env", default=None, help="Path to .env file"
     )
 
     # portfolio subcommand
@@ -107,6 +136,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "analyze":
         _run_analyze(args)
+    elif args.command == "compare":
+        _run_compare(args)
     elif args.command == "history":
         _run_history(args)
     elif args.command == "portfolio":
@@ -128,15 +159,17 @@ def _run_analyze(args: argparse.Namespace) -> None:
     logger = DecisionLogger(conn)
     pipeline = Pipeline(settings, cache, logger)
 
+    fmt = args.output_format
+
     try:
         # Batch mode: argument is a file path
         if args.url and os.path.isfile(args.url):
-            _run_batch(args.url, pipeline)
+            _run_batch(args.url, pipeline, fmt, args.output_file)
         elif args.url:
             result = pipeline.analyze_url(args.url)
             for w in result.warnings:
                 console.print(f"[yellow]Warning:[/yellow] {w}")
-            _render_decision_card(result)
+            _output_result([result], fmt, args.output_file)
         elif args.weapon and args.skin and args.quality:
             result = pipeline.analyze_manual(
                 weapon=args.weapon,
@@ -147,7 +180,7 @@ def _run_analyze(args: argparse.Namespace) -> None:
             )
             for w in result.warnings:
                 console.print(f"[yellow]Warning:[/yellow] {w}")
-            _render_decision_card(result)
+            _output_result([result], fmt, args.output_file)
         else:
             console.print(
                 "[red]Error:[/red] Provide a URL or --weapon/--skin/--quality",
@@ -161,6 +194,88 @@ def _run_analyze(args: argparse.Namespace) -> None:
     finally:
         pipeline.close()
         conn.close()
+
+
+def _result_to_dict(result: PipelineResult) -> dict:
+    """Convert a PipelineResult to a flat export dict."""
+    decision = result.decision
+    canonical = result.canonical
+    pricing = result.pricing
+
+    item_name = canonical.weapon
+    if canonical.skin:
+        item_name += f" | {canonical.skin}"
+    if canonical.quality:
+        item_name += f" ({canonical.quality})"
+    if canonical.stattrak:
+        item_name = f"StatTrak\u2122 {item_name}"
+
+    d: dict = {
+        "item": item_name,
+        "action": decision.action.value,
+        "confidence": decision.confidence,
+        "listing_price": decision.listing_price,
+        "estimated_value": decision.estimated_value,
+        "margin_pct": decision.margin_pct,
+        "safe_exit_price": decision.safe_exit_price,
+        "reasons": decision.reasons,
+        "risk_flags": decision.risk_flags,
+        "base_price": pricing.base_price if pricing else 0.0,
+        "item_class": pricing.item_class.value if pricing else "unknown",
+        "liquidity_grade": result.liquidity.grade.value if result.liquidity else "unknown",
+    }
+    if pricing and pricing.premium_breakdown:
+        d["premium_breakdown"] = pricing.premium_breakdown
+    return d
+
+
+_CSV_COLUMNS = [
+    "item", "action", "confidence", "listing_price", "estimated_value",
+    "margin_pct", "safe_exit_price", "base_price", "item_class", "liquidity_grade",
+]
+
+
+def _format_json(results: list[PipelineResult]) -> str:
+    """Format results as JSON string."""
+    data = [_result_to_dict(r) for r in results]
+    if len(data) == 1:
+        return json.dumps(data[0], indent=2, ensure_ascii=False)
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _format_csv(results: list[PipelineResult]) -> str:
+    """Format results as CSV string."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        writer.writerow(_result_to_dict(r))
+    return buf.getvalue()
+
+
+def _output_result(
+    results: list[PipelineResult],
+    fmt: str,
+    output_file: str | None,
+) -> None:
+    """Route output to the right formatter/destination."""
+    if fmt == "json":
+        text = _format_json(results)
+        if output_file:
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+        else:
+            print(text)
+    elif fmt == "csv":
+        text = _format_csv(results)
+        if output_file:
+            with open(output_file, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+        else:
+            sys.stdout.write(text)
+    else:
+        for r in results:
+            _render_decision_card(r)
 
 
 def _render_decision_card(result: PipelineResult) -> None:
@@ -278,7 +393,12 @@ def _read_urls_from_file(file_path: str) -> list[str]:
     return urls
 
 
-def _run_batch(file_path: str, pipeline: Pipeline) -> None:
+def _run_batch(
+    file_path: str,
+    pipeline: Pipeline,
+    fmt: str = "rich",
+    output_file: str | None = None,
+) -> None:
     """Run batch analysis from a file of URLs."""
     urls = _read_urls_from_file(file_path)
     if not urls:
@@ -298,12 +418,17 @@ def _run_batch(file_path: str, pipeline: Pipeline) -> None:
                 results.append((url, result, None))
                 for w in result.warnings:
                     console.print(f"[yellow]Warning:[/yellow] {w}")
-                _render_decision_card(result)
+                if fmt == "rich":
+                    _render_decision_card(result)
             except (PipelineError, Exception) as exc:
                 results.append((url, None, str(exc)))
                 console.print(f"[red]Error analyzing {url}:[/red] {exc}")
 
-    _render_batch_summary(results)
+    successful = [r for _, r, e in results if r is not None]
+    if fmt != "rich" and successful:
+        _output_result(successful, fmt, output_file)
+    elif fmt == "rich":
+        _render_batch_summary(results)
 
 
 def _render_batch_summary(
@@ -608,3 +733,178 @@ def _portfolio_value(conn) -> None:
         padding=(1, 2),
     )
     console.print(panel)
+
+
+def _run_compare(args: argparse.Namespace) -> None:
+    """Execute the compare command --- side-by-side analysis of two items."""
+    try:
+        settings = load_settings(
+            config_path=args.config,
+            env_path=args.env,
+        )
+    except ConfigError as exc:
+        console.print(f"[red]Config error:[/red] {exc}")
+        sys.exit(1)
+
+    conn = get_connection()
+    cache = CacheStore(conn)
+    logger = DecisionLogger(conn)
+    pipeline = Pipeline(settings, cache, logger)
+
+    result1: PipelineResult | None = None
+    result2: PipelineResult | None = None
+    error1: str | None = None
+    error2: str | None = None
+
+    try:
+        try:
+            result1 = pipeline.analyze_url(args.url1)
+        except (PipelineError, Exception) as exc:
+            error1 = str(exc)
+
+        try:
+            result2 = pipeline.analyze_url(args.url2)
+        except (PipelineError, Exception) as exc:
+            error2 = str(exc)
+    finally:
+        pipeline.close()
+        conn.close()
+
+    if error1 and error2:
+        console.print(f"[red]Error analyzing Item 1:[/red] {error1}")
+        console.print(f"[red]Error analyzing Item 2:[/red] {error2}")
+        sys.exit(1)
+
+    if error1:
+        console.print(f"[yellow]Could not analyze Item 1:[/yellow] {error1}")
+        console.print()
+        assert result2 is not None
+        _render_decision_card(result2)
+        return
+
+    if error2:
+        console.print(f"[yellow]Could not analyze Item 2:[/yellow] {error2}")
+        console.print()
+        assert result1 is not None
+        _render_decision_card(result1)
+        return
+
+    assert result1 is not None and result2 is not None
+    _render_comparison(result1, result2)
+
+
+def _item_label(result: PipelineResult) -> str:
+    """Build a short item label from a PipelineResult."""
+    c = result.canonical
+    label = c.weapon
+    if c.skin:
+        label += f" {c.skin}"
+    if c.quality:
+        label += f" {c.quality}"
+    return label
+
+
+def _compare_recommendation(r1: PipelineResult, r2: PipelineResult) -> str:
+    """Pick the better item. Returns recommendation string."""
+    from cs2.models.liquidity import LiquidityGrade
+
+    d1, d2 = r1.decision, r2.decision
+
+    action_rank = {DecisionAction.BUY: 2, DecisionAction.REVIEW: 1, DecisionAction.NO_BUY: 0}
+    rank1 = action_rank[d1.action]
+    rank2 = action_rank[d2.action]
+
+    if rank1 != rank2:
+        winner = 1 if rank1 > rank2 else 2
+        reason = "better action verdict"
+    elif d1.confidence != d2.confidence:
+        winner = 1 if d1.confidence > d2.confidence else 2
+        reason = "higher confidence"
+    elif d1.margin_pct != d2.margin_pct:
+        winner = 1 if d1.margin_pct > d2.margin_pct else 2
+        reason = "higher margin"
+    else:
+        liq_rank = {
+            LiquidityGrade.HIGH: 3,
+            LiquidityGrade.MEDIUM: 2,
+            LiquidityGrade.LOW: 1,
+            LiquidityGrade.UNKNOWN: 0,
+        }
+        g1 = r1.liquidity.grade if r1.liquidity else LiquidityGrade.UNKNOWN
+        g2 = r2.liquidity.grade if r2.liquidity else LiquidityGrade.UNKNOWN
+        if liq_rank[g1] != liq_rank[g2]:
+            winner = 1 if liq_rank[g1] > liq_rank[g2] else 2
+            reason = "better liquidity"
+        else:
+            return "Tie -- both items are equivalent"
+
+    winner_result = r1 if winner == 1 else r2
+    return f"Item {winner} ({_item_label(winner_result)}) -- {reason}"
+
+
+def _render_comparison(r1: PipelineResult, r2: PipelineResult) -> None:
+    """Render side-by-side Rich comparison table."""
+    d1, d2 = r1.decision, r2.decision
+    label1, label2 = _item_label(r1), _item_label(r2)
+
+    action_colors = {
+        DecisionAction.BUY: "green",
+        DecisionAction.NO_BUY: "red",
+        DecisionAction.REVIEW: "yellow",
+    }
+
+    table = Table(title="Comparison", show_lines=True, padding=(0, 1))
+    table.add_column("", min_width=16, style="bold")
+    table.add_column("Item 1", min_width=18)
+    table.add_column("Item 2", min_width=18)
+
+    table.add_row("Item", label1, label2)
+    table.add_row(
+        "Listing Price",
+        f"${d1.listing_price:.2f}",
+        f"${d2.listing_price:.2f}",
+    )
+    table.add_row(
+        "Estimated Value",
+        f"${d1.estimated_value:.2f}",
+        f"${d2.estimated_value:.2f}",
+    )
+
+    m1_sign = "+" if d1.margin_pct >= 0 else ""
+    m2_sign = "+" if d2.margin_pct >= 0 else ""
+    table.add_row(
+        "Margin",
+        f"{m1_sign}{d1.margin_pct:.1f}%",
+        f"{m2_sign}{d2.margin_pct:.1f}%",
+    )
+
+    table.add_row(
+        "Safe Exit",
+        f"${d1.safe_exit_price:.2f}",
+        f"${d2.safe_exit_price:.2f}",
+    )
+
+    liq1 = r1.liquidity.grade.value.upper() if r1.liquidity else "N/A"
+    liq2 = r2.liquidity.grade.value.upper() if r2.liquidity else "N/A"
+    table.add_row("Liquidity", liq1, liq2)
+
+    table.add_row(
+        "Confidence",
+        f"{int(d1.confidence * 100)}%",
+        f"{int(d2.confidence * 100)}%",
+    )
+
+    c1 = action_colors[d1.action]
+    c2 = action_colors[d2.action]
+    table.add_row(
+        "Action",
+        f"[{c1}]{d1.action.value.upper()}[/{c1}]",
+        f"[{c2}]{d2.action.value.upper()}[/{c2}]",
+    )
+
+    console.print()
+    console.print(table)
+
+    rec = _compare_recommendation(r1, r2)
+    console.print()
+    console.print(f"[bold]RECOMMENDATION:[/bold] {rec}")
