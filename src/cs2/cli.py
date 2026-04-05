@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 from cs2.config import ConfigError, load_settings
 from cs2.models.decision import DecisionAction
 from cs2.pipeline import Pipeline, PipelineError, PipelineResult
 from cs2.storage.cache import CacheStore
-from cs2.storage.database import get_connection
+from cs2.engine.identity import InvalidItemError, resolve_identity
+from cs2.storage.database import get_connection, query_price_history
 from cs2.storage.logger import DecisionLogger
 
 
@@ -49,6 +52,20 @@ def main(argv: list[str] | None = None) -> None:
         "--env", default=None, help="Path to .env file"
     )
 
+    # history subcommand
+    history_parser = subparsers.add_parser(
+        "history", help="Show price history for a CS2 item"
+    )
+    history_parser.add_argument(
+        "item_name", help='Item name, e.g. "AK-47 Redline FT" or "AK-47 | Redline (Field-Tested)"'
+    )
+    history_parser.add_argument(
+        "--days", type=int, default=30, help="Number of days to look back (default: 30)"
+    )
+    history_parser.add_argument(
+        "--limit", type=int, default=50, help="Maximum rows to display (default: 50)"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -57,6 +74,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "analyze":
         _run_analyze(args)
+    elif args.command == "history":
+        _run_history(args)
 
 
 def _run_analyze(args: argparse.Namespace) -> None:
@@ -75,8 +94,14 @@ def _run_analyze(args: argparse.Namespace) -> None:
     pipeline = Pipeline(settings, cache, logger)
 
     try:
-        if args.url:
+        # Batch mode: argument is a file path
+        if args.url and os.path.isfile(args.url):
+            _run_batch(args.url, pipeline)
+        elif args.url:
             result = pipeline.analyze_url(args.url)
+            for w in result.warnings:
+                console.print(f"[yellow]Warning:[/yellow] {w}")
+            _render_decision_card(result)
         elif args.weapon and args.skin and args.quality:
             result = pipeline.analyze_manual(
                 weapon=args.weapon,
@@ -85,19 +110,15 @@ def _run_analyze(args: argparse.Namespace) -> None:
                 float_value=args.float_value,
                 stattrak=args.stattrak,
             )
+            for w in result.warnings:
+                console.print(f"[yellow]Warning:[/yellow] {w}")
+            _render_decision_card(result)
         else:
             console.print(
                 "[red]Error:[/red] Provide a URL or --weapon/--skin/--quality",
                 style="bold",
             )
             sys.exit(1)
-
-        # Show warnings
-        for w in result.warnings:
-            console.print(f"[yellow]Warning:[/yellow] {w}")
-
-        # Render decision card
-        _render_decision_card(result)
 
     except PipelineError as exc:
         console.print(f"[red]Error:[/red] {exc}")
@@ -209,3 +230,181 @@ def _render_decision_card(result: PipelineResult) -> None:
         padding=(1, 2),
     )
     console.print(panel)
+
+
+def _read_urls_from_file(file_path: str) -> list[str]:
+    """Read URLs from a file, skipping empty lines and comments."""
+    urls: list[str] = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                urls.append(stripped)
+    return urls
+
+
+def _run_batch(file_path: str, pipeline: Pipeline) -> None:
+    """Run batch analysis from a file of URLs."""
+    urls = _read_urls_from_file(file_path)
+    if not urls:
+        console.print("[yellow]No URLs found in file.[/yellow]")
+        return
+
+    total = len(urls)
+    console.print(f"\n[bold]Batch analysis: {total} item(s)[/bold]\n")
+
+    # Each entry: (url, result_or_none, error_or_none)
+    results: list[tuple[str, PipelineResult | None, str | None]] = []
+
+    for i, url in enumerate(urls, 1):
+        with console.status(f"Analyzing {i}/{total}: {url}..."):
+            try:
+                result = pipeline.analyze_url(url)
+                results.append((url, result, None))
+                for w in result.warnings:
+                    console.print(f"[yellow]Warning:[/yellow] {w}")
+                _render_decision_card(result)
+            except (PipelineError, Exception) as exc:
+                results.append((url, None, str(exc)))
+                console.print(f"[red]Error analyzing {url}:[/red] {exc}")
+
+    _render_batch_summary(results)
+
+
+def _render_batch_summary(
+    results: list[tuple[str, PipelineResult | None, str | None]],
+) -> None:
+    """Render a summary table after batch analysis."""
+    table = Table(
+        title=f"Batch Summary ({len(results)} items)",
+        show_lines=True,
+    )
+    table.add_column("#", justify="right", style="dim", width=3)
+    table.add_column("Item", min_width=20)
+    table.add_column("Action", justify="center")
+    table.add_column("Conf", justify="center")
+    table.add_column("Margin", justify="right")
+
+    action_colors = {
+        DecisionAction.BUY: "green",
+        DecisionAction.NO_BUY: "red",
+        DecisionAction.REVIEW: "yellow",
+    }
+
+    for idx, (url, result, error) in enumerate(results, 1):
+        if error is not None:
+            table.add_row(
+                str(idx),
+                url,
+                "[red]ERROR[/red]",
+                "-",
+                f"[red]{error[:40]}[/red]",
+            )
+        else:
+            assert result is not None
+            decision = result.decision
+            canonical = result.canonical
+            item_name = canonical.weapon
+            if canonical.skin:
+                item_name += f" {canonical.skin}"
+            if canonical.quality:
+                item_name += f" {canonical.quality}"
+
+            color = action_colors[decision.action]
+            margin_sign = "+" if decision.margin_pct >= 0 else ""
+            table.add_row(
+                str(idx),
+                item_name,
+                f"[{color}]{decision.action.value.upper()}[/{color}]",
+                f"{int(decision.confidence * 100)}%",
+                f"{margin_sign}{decision.margin_pct:.1f}%",
+            )
+
+    console.print()
+    console.print(table)
+
+
+def _run_history(args: argparse.Namespace) -> None:
+    """Execute the history command."""
+    # Resolve item identity from free-form name
+    try:
+        canonical = resolve_identity(args.item_name)
+    except InvalidItemError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+    conn = get_connection()
+    try:
+        rows = query_price_history(
+            conn,
+            weapon=canonical.weapon,
+            skin=canonical.skin,
+            quality=canonical.quality,
+            stattrak=canonical.stattrak,
+            days=args.days,
+            limit=args.limit,
+        )
+
+        # Build item label
+        label = canonical.weapon
+        if canonical.skin:
+            label += f" | {canonical.skin}"
+        if canonical.quality:
+            label += f" ({canonical.quality})"
+        if canonical.stattrak:
+            label = f"StatTrak\u2122 {label}"
+
+        if not rows:
+            console.print(
+                f"[yellow]No price history found for {label} "
+                f"(last {args.days} days).[/yellow]"
+            )
+            return
+
+        # Build Rich table
+        table = Table(title=f"Price History \u2014 {label} (last {args.days} days)")
+        table.add_column("Date", style="cyan")
+        table.add_column("Price", style="green", justify="right")
+        table.add_column("Volume", justify="right")
+        table.add_column("Source", style="dim")
+
+        for row in rows:
+            date_str = row["recorded_at"][:10] if row["recorded_at"] else "?"
+            price_str = f"${row['price']:.2f}"
+            volume_str = str(row["volume"]) if row["volume"] is not None else "-"
+            table.add_row(date_str, price_str, volume_str, row["source"])
+
+        console.print(table)
+
+        # Summary stats
+        prices = [r["price"] for r in rows]
+        min_p = min(prices)
+        max_p = max(prices)
+        avg_p = sum(prices) / len(prices)
+        current_p = prices[0]  # most recent (ordered DESC)
+
+        # Trend: compare first half avg vs second half avg
+        mid = len(prices) // 2
+        if mid > 0:
+            recent_avg = sum(prices[:mid]) / mid
+            older_avg = sum(prices[mid:]) / (len(prices) - mid)
+            if recent_avg > older_avg * 1.02:
+                trend = "[green]\u2191 Up[/green]"
+            elif recent_avg < older_avg * 0.98:
+                trend = "[red]\u2193 Down[/red]"
+            else:
+                trend = "[yellow]\u2192 Stable[/yellow]"
+        else:
+            trend = "[dim]N/A[/dim]"
+
+        console.print()
+        console.print(
+            f"  Min: [green]${min_p:.2f}[/green]  "
+            f"Max: [red]${max_p:.2f}[/red]  "
+            f"Avg: ${avg_p:.2f}  "
+            f"Current: [bold]${current_p:.2f}[/bold]  "
+            f"Trend: {trend}"
+        )
+        console.print(f"  Records: {len(rows)}")
+    finally:
+        conn.close()

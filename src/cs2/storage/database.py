@@ -58,6 +58,36 @@ CREATE TABLE IF NOT EXISTS sticker_prices (
 """
 
 
+def query_price_history(
+    conn: sqlite3.Connection,
+    weapon: str,
+    skin: str,
+    quality: str,
+    stattrak: bool = False,
+    days: int = 30,
+    limit: int = 50,
+) -> list[dict]:
+    """Query price history for a canonical item.
+
+    Returns list of dicts with keys: price, volume, source, recorded_at.
+    """
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cursor = conn.execute(
+        """
+        SELECT price, volume, source, recorded_at
+        FROM price_history
+        WHERE weapon = ? AND skin = ? AND quality = ? AND stattrak = ?
+              AND recorded_at >= ?
+        ORDER BY recorded_at DESC
+        LIMIT ?
+        """,
+        (weapon, skin, quality, int(stattrak), cutoff, limit),
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
 def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     """Create or open SQLite database with schema migrations applied."""
     if db_path is None:
