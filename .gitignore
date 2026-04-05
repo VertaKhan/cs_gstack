@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Data cache
+data/cache/
+data/raw/
+*.db
+*.sqlite3
+
+# gstack
+.gstack/
+gstack-global-discover.exe
+*.exe
+.claude/skills/gstack/node_modules/
+.claude/skills/gstack/browse/dist/
+.claude/skills/gstack/design/dist/
+.claude/skills/gstack/bin/gstack-global-discover
+
+# Secrets
+credentials.json
+secrets.json
+*.pem
+*.key
