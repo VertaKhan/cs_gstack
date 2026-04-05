@@ -60,16 +60,17 @@ def analyze_liquidity(
 
 
 def _calc_spread(prices: list[float]) -> float:
-    """Calculate average spread percentage from recent sale prices."""
+    """Calculate spread percentage using p25/p75 as bid-ask proxy."""
     if len(prices) < 2:
         return 0.0
     sorted_prices = sorted(prices)
-    lowest = sorted_prices[0]
-    highest = sorted_prices[-1]
-    midpoint = (lowest + highest) / 2
+    n = len(sorted_prices)
+    p25 = sorted_prices[max(0, n // 4)]
+    p75 = sorted_prices[min(n - 1, 3 * n // 4)]
+    midpoint = (p25 + p75) / 2
     if midpoint <= 0:
         return 0.0
-    return ((highest - lowest) / midpoint) * 100
+    return ((p75 - p25) / midpoint) * 100
 
 
 def _determine_grade(

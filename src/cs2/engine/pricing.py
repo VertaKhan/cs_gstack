@@ -124,10 +124,12 @@ def _classify_and_price(
     is_premium = False
 
     # 1. Float premium
-    float_premium = _calc_float_premium(instance.float_value, canonical.quality, base_price)
+    float_premium, float_percentile = _calc_float_premium(
+        instance.float_value, canonical.quality, base_price
+    )
     if float_premium != 0:
         premiums["float"] = round(float_premium, 2)
-        if float_premium > 0:
+        if float_premium > 0 and float_percentile <= settings.premium_float_top_pct:
             is_premium = True
 
     # 2. Sticker premium
@@ -162,16 +164,19 @@ def _classify_and_price(
 
 def _calc_float_premium(
     float_value: float, quality: str, base_price: float
-) -> float:
-    """Calculate float premium based on percentile within wear tier."""
+) -> tuple[float, float]:
+    """Calculate float premium based on percentile within wear tier.
+
+    Returns (premium_amount, percentile) where percentile 0.0 = best, 1.0 = worst.
+    """
     tier_range = WEAR_TIERS.get(quality)
     if tier_range is None:
-        return 0.0
+        return 0.0, 1.0
 
     tier_min, tier_max = tier_range
     tier_width = tier_max - tier_min
     if tier_width <= 0:
-        return 0.0
+        return 0.0, 1.0
 
     # Percentile: 0.0 = best float in tier, 1.0 = worst
     percentile = (float_value - tier_min) / tier_width
@@ -180,14 +185,14 @@ def _calc_float_premium(
     # Top percentiles (low float = good)
     for threshold, factor in FLOAT_FACTORS:
         if percentile <= threshold:
-            return base_price * factor
+            return base_price * factor, percentile
 
     # Bottom 5% (high float within tier = worst)
     if percentile >= 0.95:
-        return base_price * FLOAT_BOTTOM_FACTOR
+        return base_price * FLOAT_BOTTOM_FACTOR, percentile
 
     # Middle — no premium
-    return 0.0
+    return 0.0, percentile
 
 
 def _calc_sticker_premium(

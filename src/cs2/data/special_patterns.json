@@ -16,10 +16,6 @@
       "442": {"name": "Blue Gem Reverse", "premium_pct": 5.0},
       "269": {"name": "Blue Gem Tier 2", "premium_pct": 3.0},
       "853": {"name": "Hiko Pattern", "premium_pct": 4.0}
-    },
-    "Fade": {
-      "max_fade": {"name": "100% Fade", "premium_pct": 0.5},
-      "high_fade": {"name": "95-99% Fade", "premium_pct": 0.25}
     }
   },
   "Butterfly Knife": {
@@ -39,12 +35,6 @@
     "Case Hardened": {
       "423": {"name": "Blue Gem", "premium_pct": 5.0},
       "601": {"name": "Ocean Blue", "premium_pct": 3.5}
-    }
-  },
-  "Bayonet": {
-    "Marble Fade": {
-      "fire_ice": {"name": "Fire & Ice", "premium_pct": 1.5},
-      "fake_fire_ice": {"name": "Fake Fire & Ice", "premium_pct": 0.5}
     }
   }
 }

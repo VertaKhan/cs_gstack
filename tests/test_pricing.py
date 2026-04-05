@@ -88,32 +88,35 @@ class TestClassifyPremium:
 class TestFloatPremium:
     def test_float_premium_top1(self):
         """0.001 FN -> top 1% -> 50% premium."""
-        premium = _calc_float_premium(0.001, "Factory New", 100.0)
+        premium, percentile = _calc_float_premium(0.001, "Factory New", 100.0)
         # percentile = 0.001 / 0.07 = 0.014 -> top 5% (0.05 threshold) -> 20%
         # Actually 0.014 > 0.01, so top 5% -> factor 0.20
         assert premium == pytest.approx(20.0, abs=0.01)
+        assert percentile == pytest.approx(0.014, abs=0.001)
 
     def test_float_premium_actual_top1(self):
         """True top 1% float."""
         # FN range 0-0.07, top 1% = percentile <= 0.01 -> float <= 0.0007
-        premium = _calc_float_premium(0.0005, "Factory New", 100.0)
+        premium, percentile = _calc_float_premium(0.0005, "Factory New", 100.0)
         assert premium == pytest.approx(50.0, abs=0.01)
+        assert percentile <= 0.01
 
     def test_float_premium_mid(self):
         """Mid-range float -> 0% premium."""
-        premium = _calc_float_premium(0.25, "Field-Tested", 100.0)
+        premium, percentile = _calc_float_premium(0.25, "Field-Tested", 100.0)
         assert premium == 0.0
 
     def test_float_premium_bottom5(self):
         """Bottom 5% float -> -10% (penalty)."""
         # FT range: 0.15-0.38, bottom 5% = percentile >= 0.95
         # percentile = (0.375 - 0.15) / 0.23 = 0.978 -> bottom 5%
-        premium = _calc_float_premium(0.375, "Field-Tested", 100.0)
+        premium, percentile = _calc_float_premium(0.375, "Field-Tested", 100.0)
         assert premium == pytest.approx(-10.0, abs=0.01)
+        assert percentile >= 0.95
 
     def test_float_premium_unknown_quality(self):
         """Unknown quality -> no tier -> 0 premium."""
-        premium = _calc_float_premium(0.25, "SomeRandomQuality", 100.0)
+        premium, percentile = _calc_float_premium(0.25, "SomeRandomQuality", 100.0)
         assert premium == 0.0
 
 

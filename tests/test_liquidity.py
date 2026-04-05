@@ -95,8 +95,17 @@ class TestSpread:
     def test_spread_calculation(self):
         prices = [10.0, 20.0]
         spread = _calc_spread(prices)
-        # (20-10) / 15 * 100 = 66.67
+        # n=2, p25=sorted[0]=10.0, p75=sorted[1]=20.0, mid=15
+        # (20-10)/15*100 = 66.67
         assert spread == pytest.approx(66.67, abs=0.01)
+
+    def test_spread_percentile_based(self):
+        """With more data points, spread uses p25/p75 not full range."""
+        prices = [5.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 20.0]
+        spread = _calc_spread(prices)
+        # n=8, p25=sorted[2]=9.0, p75=sorted[6]=13.0, mid=11.0
+        # (13-9)/11*100 = 36.36
+        assert spread == pytest.approx(36.36, abs=0.01)
 
     def test_spread_single_price(self):
         assert _calc_spread([10.0]) == 0.0
