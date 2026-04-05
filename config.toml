@@ -1,0 +1,26 @@
+# CS2 Analyzer Configuration
+# Override default settings here. Missing keys use defaults.
+
+[thresholds]
+premium_float_top_pct = 0.05
+premium_sticker_min_value = 5.0
+confidence_review_threshold = 0.5
+min_sales_for_base_price = 5
+
+[cache_ttl]
+market_price = 3600      # 1 hour
+listing = 900            # 15 minutes
+identity = 604800        # 7 days
+sticker_price = 86400    # 24 hours
+float_data = 2592000     # 30 days
+
+[liquidity]
+high_threshold = 10.0    # sales/day
+low_threshold = 1.0      # sales/day
+
+[sticker_premiums]
+mult_kato14_holo = 0.12
+mult_kato14 = 0.065
+mult_other_holo = 0.04
+best_position_bonus = 1.2
+scratched_penalty = 0.5

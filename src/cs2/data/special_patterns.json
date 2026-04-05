@@ -1,0 +1,50 @@
+{
+  "AK-47": {
+    "Case Hardened": {
+      "661": {"name": "Scar Pattern", "premium_pct": 5.0},
+      "670": {"name": "Reverse Scar", "premium_pct": 3.5},
+      "321": {"name": "Blue Booty", "premium_pct": 1.5},
+      "387": {"name": "Blue Mag", "premium_pct": 1.2},
+      "955": {"name": "Blue Top", "premium_pct": 2.0},
+      "760": {"name": "Honorable Mention Blue", "premium_pct": 0.8},
+      "868": {"name": "Blue Top Tier 2", "premium_pct": 1.0}
+    }
+  },
+  "Karambit": {
+    "Case Hardened": {
+      "387": {"name": "Blue Gem", "premium_pct": 8.0},
+      "442": {"name": "Blue Gem Reverse", "premium_pct": 5.0},
+      "269": {"name": "Blue Gem Tier 2", "premium_pct": 3.0},
+      "853": {"name": "Hiko Pattern", "premium_pct": 4.0}
+    },
+    "Fade": {
+      "max_fade": {"name": "100% Fade", "premium_pct": 0.5},
+      "high_fade": {"name": "95-99% Fade", "premium_pct": 0.25}
+    }
+  },
+  "Butterfly Knife": {
+    "Case Hardened": {
+      "494": {"name": "Blue Gem", "premium_pct": 6.0},
+      "182": {"name": "Blue Gem Tier 2", "premium_pct": 3.0}
+    }
+  },
+  "Five-SeveN": {
+    "Case Hardened": {
+      "278": {"name": "Blue Gem", "premium_pct": 2.0},
+      "690": {"name": "Blue Gem Tier 2", "premium_pct": 1.0},
+      "868": {"name": "Full Blue", "premium_pct": 1.5}
+    }
+  },
+  "M9 Bayonet": {
+    "Case Hardened": {
+      "423": {"name": "Blue Gem", "premium_pct": 5.0},
+      "601": {"name": "Ocean Blue", "premium_pct": 3.5}
+    }
+  },
+  "Bayonet": {
+    "Marble Fade": {
+      "fire_ice": {"name": "Fire & Ice", "premium_pct": 1.5},
+      "fake_fire_ice": {"name": "Fake Fire & Ice", "premium_pct": 0.5}
+    }
+  }
+}
