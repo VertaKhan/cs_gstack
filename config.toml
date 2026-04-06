@@ -28,3 +28,7 @@ mult_kato14 = 0.065
 mult_other_holo = 0.04
 best_position_bonus = 1.2
 scratched_penalty = 0.5
+
+[monitor]
+default_interval = 300       # seconds between checks
+default_min_margin = 15.0    # minimum margin % to trigger alert

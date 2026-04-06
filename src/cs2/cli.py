@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from cs2.config import ConfigError, load_settings
+from cs2.engine.monitor import Monitor, MonitorCriteria
 from cs2.models.decision import DecisionAction
 from cs2.pipeline import Pipeline, PipelineError, PipelineResult
 from cs2.storage.cache import CacheStore
@@ -138,6 +139,36 @@ def main(argv: list[str] | None = None) -> None:
     # portfolio value
     portfolio_sub.add_parser("value", help="Portfolio summary and P&L")
 
+    # monitor subcommand
+    monitor_parser = subparsers.add_parser(
+        "monitor", help="Monitor CS2 listings for underpriced items"
+    )
+    monitor_parser.add_argument("--weapon", required=True, help="Weapon name (e.g. AK-47)")
+    monitor_parser.add_argument("--skin", required=True, help="Skin name (e.g. Redline)")
+    monitor_parser.add_argument(
+        "--quality", default="FT", help="Quality (FN/MW/FT/WW/BS, default: FT)"
+    )
+    monitor_parser.add_argument(
+        "--stattrak", action="store_true", help="StatTrak items only"
+    )
+    monitor_parser.add_argument(
+        "--max-price", type=float, default=None, help="Maximum price filter"
+    )
+    monitor_parser.add_argument(
+        "--min-margin", type=float, default=None,
+        help="Minimum margin %% to alert (default from config: 15)"
+    )
+    monitor_parser.add_argument(
+        "--interval", type=int, default=None,
+        help="Seconds between checks (default from config: 300)"
+    )
+    monitor_parser.add_argument(
+        "--config", default=None, help="Path to config.toml"
+    )
+    monitor_parser.add_argument(
+        "--env", default=None, help="Path to .env file"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -152,6 +183,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_history(args)
     elif args.command == "portfolio":
         _run_portfolio(args)
+    elif args.command == "monitor":
+        _run_monitor(args)
 
 
 def _run_analyze(args: argparse.Namespace) -> None:
@@ -930,3 +963,74 @@ def _render_comparison(r1: PipelineResult, r2: PipelineResult) -> None:
     rec = _compare_recommendation(r1, r2)
     console.print()
     console.print(f"[bold]RECOMMENDATION:[/bold] {rec}")
+
+
+def _run_monitor(args: argparse.Namespace) -> None:
+    """Execute the monitor command."""
+    try:
+        settings = load_settings(
+            config_path=args.config,
+            env_path=args.env,
+        )
+    except ConfigError as exc:
+        console.print(f"[red]Config error:[/red] {exc}")
+        sys.exit(1)
+
+    # Resolve quality alias
+    from cs2.engine.identity import _normalize_quality
+    quality = _normalize_quality(args.quality)
+
+    # Read monitor defaults from config
+    monitor_config = _load_monitor_config(args.config)
+    interval = args.interval or monitor_config.get("default_interval", 300)
+    min_margin = args.min_margin if args.min_margin is not None else monitor_config.get("default_min_margin", 15.0)
+
+    criteria = MonitorCriteria(
+        weapon=args.weapon,
+        skin=args.skin,
+        quality=quality,
+        stattrak=args.stattrak,
+        max_price=args.max_price,
+        min_margin=min_margin,
+    )
+
+    conn = get_connection()
+    cache = CacheStore(conn)
+    logger = DecisionLogger(conn)
+
+    try:
+        monitor = Monitor(
+            criteria=criteria,
+            settings=settings,
+            cache=cache,
+            logger=logger,
+            interval=interval,
+        )
+        monitor.run()
+    finally:
+        conn.close()
+
+
+def _load_monitor_config(config_path: str | None) -> dict:
+    """Load [monitor] section from config.toml."""
+    from pathlib import Path
+
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    if config_path is None:
+        config_path_obj = Path.cwd() / "config.toml"
+    else:
+        config_path_obj = Path(config_path)
+
+    if not config_path_obj.exists():
+        return {}
+
+    try:
+        with open(config_path_obj, "rb") as f:
+            data = tomllib.load(f)
+        return data.get("monitor", {})
+    except Exception:
+        return {}
