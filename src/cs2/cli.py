@@ -69,6 +69,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Write output to file instead of stdout",
     )
     analyze_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use only cached data, no API calls",
+    )
+    analyze_parser.add_argument(
         "--config", default=None, help="Path to config.toml"
     )
     analyze_parser.add_argument(
@@ -95,6 +100,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     compare_parser.add_argument("url1", help="First CSFloat or Steam Market URL")
     compare_parser.add_argument("url2", help="Second CSFloat or Steam Market URL")
+    compare_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use only cached data, no API calls",
+    )
     compare_parser.add_argument(
         "--config", default=None, help="Path to config.toml"
     )
@@ -154,10 +164,16 @@ def _run_analyze(args: argparse.Namespace) -> None:
     except ConfigError as exc:
         console.print(f"[red]Config error:[/red] {exc}")
         sys.exit(1)
+    offline = args.offline
     conn = get_connection()
     cache = CacheStore(conn)
     logger = DecisionLogger(conn)
-    pipeline = Pipeline(settings, cache, logger)
+    pipeline = Pipeline(settings, cache, logger, offline=offline)
+
+    if offline:
+        console.print(
+            "[yellow bold]\u26a0 OFFLINE MODE \u2014 using cached data only (may be stale)[/yellow bold]"
+        )
 
     fmt = args.output_format
 
@@ -746,10 +762,16 @@ def _run_compare(args: argparse.Namespace) -> None:
         console.print(f"[red]Config error:[/red] {exc}")
         sys.exit(1)
 
+    offline = args.offline
     conn = get_connection()
     cache = CacheStore(conn)
     logger = DecisionLogger(conn)
-    pipeline = Pipeline(settings, cache, logger)
+    pipeline = Pipeline(settings, cache, logger, offline=offline)
+
+    if offline:
+        console.print(
+            "[yellow bold]\u26a0 OFFLINE MODE \u2014 using cached data only (may be stale)[/yellow bold]"
+        )
 
     result1: PipelineResult | None = None
     result2: PipelineResult | None = None

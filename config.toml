@@ -18,6 +18,10 @@ float_data = 2592000     # 30 days
 high_threshold = 10.0    # sales/day
 low_threshold = 1.0      # sales/day
 
+[sources]
+skinport_enabled = true
+dmarket_enabled = true
+
 [sticker_premiums]
 mult_kato14_holo = 0.12
 mult_kato14 = 0.065

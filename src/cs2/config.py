@@ -35,6 +35,10 @@ class Settings(BaseModel, frozen=True):
     cache_ttl_sticker_price: int = 86400
     cache_ttl_float_data: int = 2592000
 
+    # Additional sources
+    skinport_enabled: bool = True
+    dmarket_enabled: bool = True
+
     # Liquidity
     liquidity_high_threshold: float = 10.0
     liquidity_low_threshold: float = 1.0
@@ -89,6 +93,12 @@ def load_settings(
             raise ConfigError(f"Error reading {config_path}: {exc}")
 
         # Flatten TOML sections into Settings fields
+        sources = toml_data.get("sources", {})
+        if "skinport_enabled" in sources:
+            overrides["skinport_enabled"] = sources["skinport_enabled"]
+        if "dmarket_enabled" in sources:
+            overrides["dmarket_enabled"] = sources["dmarket_enabled"]
+
         thresholds = toml_data.get("thresholds", {})
         cache_ttl = toml_data.get("cache_ttl", {})
         liquidity = toml_data.get("liquidity", {})

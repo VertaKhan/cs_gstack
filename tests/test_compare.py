@@ -172,6 +172,7 @@ class TestCompareOneFails:
                 command="compare",
                 url1="bad-url",
                 url2="https://csfloat.com/item/2",
+                offline=False,
                 config=None,
                 env=None,
             )
@@ -203,6 +204,7 @@ class TestCompareOneFails:
                 command="compare",
                 url1="bad1",
                 url2="bad2",
+                offline=False,
                 config=None,
                 env=None,
             )

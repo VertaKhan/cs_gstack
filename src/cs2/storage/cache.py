@@ -10,14 +10,24 @@ class CacheStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
-    def get(self, key: str) -> str | None:
-        """Get cached value if not expired. Returns None on miss or corruption."""
-        now = datetime.now(timezone.utc).isoformat()
+    def get(self, key: str, ignore_ttl: bool = False) -> str | None:
+        """Get cached value if not expired. Returns None on miss or corruption.
+
+        If *ignore_ttl* is True, return value even when the entry has expired
+        (useful for offline mode).
+        """
         try:
-            row = self.conn.execute(
-                "SELECT value FROM cache WHERE key = ? AND expires_at > ?",
-                (key, now),
-            ).fetchone()
+            if ignore_ttl:
+                row = self.conn.execute(
+                    "SELECT value FROM cache WHERE key = ?",
+                    (key,),
+                ).fetchone()
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                row = self.conn.execute(
+                    "SELECT value FROM cache WHERE key = ? AND expires_at > ?",
+                    (key, now),
+                ).fetchone()
         except sqlite3.DatabaseError:
             # Cache corruption — treat as miss
             return None

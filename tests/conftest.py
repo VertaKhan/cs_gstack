@@ -17,6 +17,8 @@ def settings() -> Settings:
     return Settings(
         csfloat_api_key="test-csfloat-key-123",
         steam_api_key="test-steam-key-456",
+        skinport_enabled=False,
+        dmarket_enabled=False,
     )
 
 

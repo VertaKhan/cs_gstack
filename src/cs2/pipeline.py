@@ -16,6 +16,8 @@ from cs2.models.liquidity import LiquidityGrade, LiquidityResult
 from cs2.models.pricing import ItemClass, MarketData, PricingResult, RawListing
 from cs2.sources.base import SourceError
 from cs2.sources.csfloat import CSFloatClient
+from cs2.sources.dmarket import DMarketClient
+from cs2.sources.skinport import SkinportClient
 from cs2.sources.steam import SteamClient
 from cs2.storage.cache import CacheStore
 from cs2.storage.logger import DecisionLogger
@@ -42,16 +44,28 @@ class Pipeline:
         settings: Settings,
         cache: CacheStore,
         logger: DecisionLogger,
+        offline: bool = False,
     ) -> None:
         self.settings = settings
         self.cache = cache
         self.logger = logger
+        self.offline = offline
         self.csfloat = CSFloatClient(settings, cache)
         self.steam = SteamClient(settings, cache)
+        self.skinport: SkinportClient | None = (
+            SkinportClient(settings, cache) if settings.skinport_enabled else None
+        )
+        self.dmarket: DMarketClient | None = (
+            DMarketClient(settings, cache) if settings.dmarket_enabled else None
+        )
 
     def close(self) -> None:
         self.csfloat.close()
         self.steam.close()
+        if self.skinport is not None:
+            self.skinport.close()
+        if self.dmarket is not None:
+            self.dmarket.close()
 
     def analyze_url(self, url: str) -> PipelineResult:
         """Run full pipeline from a URL."""
@@ -59,10 +73,13 @@ class Pipeline:
 
         # Step 1: Source Ingest
         listing: RawListing | None = None
-        try:
-            listing = self.csfloat.fetch_listing(url)
-        except SourceError as exc:
-            raise PipelineError(f"Cannot fetch listing: {exc}")
+        if self.offline:
+            listing = self._offline_fetch_listing(url)
+        else:
+            try:
+                listing = self.csfloat.fetch_listing(url)
+            except SourceError as exc:
+                raise PipelineError(f"Cannot fetch listing: {exc}")
 
         # Step 2: Identity
         try:
@@ -176,25 +193,100 @@ class Pipeline:
     def _fetch_market_data(
         self, market_name: str, warns: list[str]
     ) -> MarketData:
-        """Fetch market data from CSFloat, fallback to Steam."""
+        """Fetch market data from CSFloat, fallback to Steam, aggregate extras."""
+        if self.offline:
+            return self._offline_fetch_market_data(market_name)
+
+        primary: MarketData | None = None
+
         try:
-            return self.csfloat.fetch_market_data(market_name)
+            primary = self.csfloat.fetch_market_data(market_name)
         except SourceError:
             warns.append("CSFloat market data unavailable, trying Steam")
 
-        try:
-            return self.steam.fetch_market_data(market_name)
-        except SourceError:
-            warns.append("Steam market data unavailable — using degraded mode")
+        if primary is None:
+            try:
+                primary = self.steam.fetch_market_data(market_name)
+            except SourceError:
+                warns.append("Steam market data unavailable — using degraded mode")
 
-        # Fallback: minimal market data
-        return MarketData(
-            item_name=market_name,
-            median_price=0.0,
-            lowest_price=None,
-            volume_24h=None,
-            recent_sales=[],
-            source="none",
+        # Collect additional source prices for aggregation
+        extra_prices: list[float] = []
+
+        if self.skinport is not None:
+            try:
+                sp = self.skinport.fetch_market_data(market_name)
+                if sp.median_price > 0:
+                    extra_prices.append(sp.median_price)
+            except SourceError:
+                warns.append("Skinport market data unavailable")
+
+        if self.dmarket is not None:
+            try:
+                dm = self.dmarket.fetch_market_data(market_name)
+                if dm.median_price > 0:
+                    extra_prices.append(dm.median_price)
+            except SourceError:
+                warns.append("DMarket market data unavailable")
+
+        if primary is None:
+            if extra_prices:
+                # Use extra sources as primary
+                import statistics
+                median = statistics.median(extra_prices)
+                return MarketData(
+                    item_name=market_name,
+                    median_price=median,
+                    lowest_price=min(extra_prices),
+                    volume_24h=None,
+                    recent_sales=[],
+                    source="aggregated",
+                )
+            # Fallback: minimal market data
+            return MarketData(
+                item_name=market_name,
+                median_price=0.0,
+                lowest_price=None,
+                volume_24h=None,
+                recent_sales=[],
+                source="none",
+            )
+
+        # Aggregate: median across primary + extra sources
+        if extra_prices and primary.median_price > 0:
+            import statistics
+            all_prices = [primary.median_price] + extra_prices
+            primary = primary.model_copy(
+                update={"median_price": statistics.median(all_prices)}
+            )
+
+        return primary
+
+    # ------------------------------------------------------------------
+    # Offline helpers
+    # ------------------------------------------------------------------
+
+    def _offline_fetch_listing(self, url: str) -> RawListing:
+        """Load listing from cache only (ignore TTL). Raise on miss."""
+        from cs2.sources.csfloat import parse_listing_id
+
+        listing_id = parse_listing_id(url)
+        cache_key = f"csfloat:listing:{listing_id}"
+        cached = self.cache.get(cache_key, ignore_ttl=True)
+        if cached is not None:
+            return RawListing.model_validate_json(cached)
+        raise PipelineError(
+            f"No cached data for listing '{listing_id}'. Run online analysis first."
+        )
+
+    def _offline_fetch_market_data(self, market_name: str) -> MarketData:
+        """Load market data from cache only (ignore TTL). Raise on miss."""
+        for prefix in ("csfloat:market:", "steam:market:"):
+            cached = self.cache.get(f"{prefix}{market_name}", ignore_ttl=True)
+            if cached is not None:
+                return MarketData.model_validate_json(cached)
+        raise PipelineError(
+            f"No cached market data for '{market_name}'. Run online analysis first."
         )
 
     def _enrich(
