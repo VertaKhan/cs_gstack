@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-import warnings
 from dataclasses import dataclass, field
 
 from cs2.config import Settings

@@ -173,9 +173,9 @@ def query_price_history(
 
     Returns list of dicts with keys: price, volume, source, recorded_at.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     cursor = conn.execute(
         """
         SELECT price, volume, source, recorded_at

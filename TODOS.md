@@ -1,57 +1,44 @@
 # TODOS — CS2 Skins Analysis System
 
-## Deferred from CEO Review (2026-04-05)
+## Реализовано (из Deferred CEO Review 2026-04-05)
 
-### P2: Batch Analysis Mode
-- **What:** `cs2 analyze urls.txt` — анализ списка лотов за один запуск
-- **Why:** Ускоряет workflow при просмотре множества лотов
-- **Effort:** S (human) → S (CC)
-- **Depends on:** Stable single-item pipeline
+### [DONE] P2: Batch Analysis Mode
+- `cs2 analyze urls.txt` — анализ списка лотов за один запуск
+- Коммит: Add price history CLI and batch analysis mode
 
-### P2: Price Alert / Monitoring
-- **What:** `cs2 monitor --criteria "weapon=AK-47 skin=Redline max_price=50"` — фоновый мониторинг
-- **Why:** Автоматический поиск выгодных лотов без ручного запуска
-- **Effort:** L (human) → M (CC)
-- **Depends on:** Stable pipeline + async scheduler
+### [DONE] P2: Price Alert / Monitoring
+- `cs2 monitor --weapon "AK-47" --skin "Redline" --max-price 50` — polling мониторинг
+- Коммит: Add price monitoring
 
-### P3: JSON/CSV Export
-- **What:** `cs2 analyze --format json/csv` — экспорт результатов
-- **Why:** Интеграция с внешними инструментами, spreadsheets
-- **Effort:** S (human) → S (CC)
-- **Depends on:** Stable output format
+### [DONE] P3: JSON/CSV Export
+- `cs2 analyze --format json/csv -o file` — экспорт результатов
+- Коммит: Add JSON/CSV export and comparative analysis
 
-### P3: Comparative Analysis
-- **What:** `cs2 compare <lot1> <lot2>` — side-by-side сравнение двух лотов
-- **Why:** Помогает выбрать лучший из нескольких вариантов
-- **Effort:** M (human) → S (CC)
-- **Depends on:** Stable single-item pipeline
+### [DONE] P3: Comparative Analysis
+- `cs2 compare <url1> <url2>` — side-by-side сравнение
+- Коммит: Add JSON/CSV export and comparative analysis
 
-### P3: Offline Mode
-- **What:** Полноценная работа только с кэшированными данными
-- **Why:** Анализ без интернета, при rate limit'ах
-- **Effort:** S (human) → S (CC)
-- **Depends on:** Mature cache layer
+### [DONE] P3: Offline Mode
+- `cs2 analyze --offline` — работа только с кэшированными данными
+- Коммит: Add Skinport/DMarket sources and offline mode
 
-### P2: Price History CLI
-- **What:** `cs2 history "AK-47 Redline FT"` — отображение графика цен
-- **Why:** Контекст для принятия решения (тренд вверх/вниз)
-- **Effort:** M (human) → S (CC)
-- **Depends on:** Price history data in SQLite (already collected by pricing engine)
+### [DONE] P2: Price History CLI
+- `cs2 history "AK-47 Redline FT"` — отображение таблицы цен
+- Коммит: Add price history CLI and batch analysis mode
 
-### P2: Additional Marketplaces
-- **What:** Skinport, DMarket, Buff163 source adapters
-- **Why:** Больше данных = точнее pricing и liquidity
-- **Effort:** L (human) → M (CC) per source
-- **Depends on:** Adapter pattern in source ingest
+### [DONE] P2: Additional Marketplaces
+- Skinport, DMarket source adapters
+- Коммит: Add Skinport/DMarket sources and offline mode
+
+### [DONE] P2: Portfolio Tracking
+- `cs2 portfolio add/list/sell/value` — отслеживание инвентаря
+- Коммит: Add portfolio tracking
+
+## Backlog (не реализовано)
 
 ### P1: ML Pricing Models
 - **What:** Trained model для premium estimation вместо rule-based heuristics
 - **Why:** Более точная оценка exact-premium items
 - **Effort:** XL (human) → L (CC)
-- **Depends on:** 500+ labeled decisions in decision_log
-
-### P2: Portfolio Tracking
-- **What:** `cs2 portfolio add/list/value` — отслеживание инвентаря
-- **Why:** Общая картина позиции, P&L tracking
-- **Effort:** M (human) → S (CC)
-- **Depends on:** Stable pricing engine
+- **Status:** BLOCKED — нужны 500+ labeled decisions в decision_log
+- **Depends on:** Накопление данных через использование системы. Каждый `cs2 analyze` логирует решение. После накопления достаточного объёма можно обучить модель.
